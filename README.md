@@ -17,7 +17,8 @@ Un asistente de voz para Linux con forma de **gota de energía flotante con ojos
 - ⏰ **Recordatorios y alarmas**: *«Recuérdame sacar la basura a las ocho»*. A esa hora suena una alarma, la esfera muestra una campana y te lo dice en voz alta. Se guardan en `recordatorios.json`, así que sobreviven a reinicios (si el PC estaba apagado, te avisa al volver).
 - 🎨 **Toma los colores de tu fondo de escritorio** (también de Wallpaper Engine) para combinar con él.
 - 🎮 **Se oculta sola** con juegos o vídeos a pantalla completa (en KDE Plasma).
-- 💬 **Recuerda la conversación** entre usos. Di *«nueva conversación»* para empezar de cero.
+- ⚡ **Responde rápido**: empieza a hablar en cuanto tiene la primera frase (sin esperar la respuesta completa), usa un modelo ágil para las preguntas y uno más capaz solo para lo que confirmas.
+- 💬 **Recuerda la conversación** entre usos; tras 30 minutos sin hablarle empieza una nueva. Di *«nueva conversación»* para empezar de cero cuando quieras.
 
 ## Requisitos
 
@@ -79,6 +80,10 @@ Edita `config.json` (se crea al instalar a partir de `config.example.json`) y re
 | `velocidad_piper` | `1.0` | Velocidad de la voz: >1 más lento, <1 más rápido. |
 | `permisos_confirmado` | `auto` | Permisos de Claude **tras confirmar**: `auto` o `acceptEdits` (solo editar archivos, sin ejecutar comandos). |
 | `directorio` | `~` | Carpeta donde trabaja Claude. |
+| `modelo` | `sonnet` | Modelo para responder preguntas (rápido). |
+| `modelo_acciones` | `opus` | Modelo para hacer lo que confirmas (programar, cambiar cosas). |
+| `esfuerzo` | `low` | Cuánto piensa al responder preguntas (`low`, `medium`, `high`; vacío = predeterminado). |
+| `minutos_conversacion` | `30` | Tras estos minutos sin hablarle empieza una conversación nueva (un historial largo la hace más lenta). |
 | `segundos_max_orden` | `30` | Tiempo máximo hablando. |
 | `segundos_silencio` | `1.2` | Segundos de silencio tras los que deja de escucharte (súbelo si te corta al hacer pausas). |
 | `segundos_confirmacion` | `6` | Tiempo para decir «sí». |

@@ -13,10 +13,13 @@ voz; solo con un "sí" se ejecuta.
 """
 import json
 import os
+import queue
 import re
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import unicodedata
 
@@ -38,6 +41,12 @@ CONFIG = {
     "segundos_silencio": 1.2,  # pausa tras la que deja de escucharte
     "segundos_confirmacion": 6,
     "timeout_claude": 600,
+    # Modelo para las preguntas (rápido) y para hacer lo que confirmas (más capaz); "" = el predeterminado.
+    "modelo": "sonnet",
+    "modelo_acciones": "opus",
+    "esfuerzo": "low",  # cuánto piensa en las preguntas: low, medium, high ("" = predeterminado)
+    # Tras estos minutos sin hablarle empieza una conversación nueva (el historial largo la hace lenta).
+    "minutos_conversacion": 30,
     "escala_orbe": 1.0,
     "colores_fondo": True,
     "oye_claude": True,  # despertar diciendo «oye Claude» (escucha local con Vosk; nada sale del PC)  # la esfera toma los colores del fondo de escritorio
@@ -74,7 +83,9 @@ PROMPT_SISTEMA = (
     "Para recordatorios y alarmas tampoco ejecutes nada ni pidas confirmación: añade [RECORDAR AAAA-MM-DD HH:MM|texto breve] "
     "con la fecha y hora absolutas (calcúlalas a partir de la fecha actual); a esa hora la esfera sonará, lo mostrará "
     "y lo dirá en voz alta, aunque se reinicie el PC. Puedes poner varias etiquetas. Los pendientes se guardan en "
-    f"{os.path.join(DIR, 'recordatorios.json')} (para borrar alguno hay que editar ese archivo)."
+    f"{os.path.join(DIR, 'recordatorios.json')} (para borrar alguno hay que editar ese archivo). "
+    "Para el clima no busques en la web: usa curl -s 'wttr.in/CIUDAD?format=%l|%C|%t|%f|%h|%w&lang=es&m' "
+    "(sin ciudad usa la ubicación del usuario; para el pronóstico, 'wttr.in/CIUDAD?format=j1&lang=es')."
 )
 TARJETA = re.compile(r"\[MOSTRAR\s+([^\]]*)\]")
 RECORDAR = re.compile(r"\[RECORDAR\s+(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2})\s*\|([^\]]*)\]")
@@ -99,24 +110,31 @@ def normalizar(t):
     return "".join(c for c in t if unicodedata.category(c) != "Mn").strip(" .,!?¿¡")
 
 
+def tarjeta_de(m):
+    partes = [x.strip() for x in m.group(1).split("|")] + ["", ""]
+    return {"icono": partes[0].lower(), "grande": partes[1], "pequeno": partes[2]}
+
+
+def recordatorio_de(m):
+    return {"cuando": m.group(1).replace("T", " "), "texto": m.group(2).strip()}
+
+
 def extraer_tarjeta(t):
     """Quita la etiqueta [MOSTRAR icono|grande|pequeño] y devuelve (texto, tarjeta o None)."""
     m = TARJETA.search(t)
     if not m:
         return t, None
-    partes = [x.strip() for x in m.group(1).split("|")] + ["", ""]
-    tarjeta = {"icono": partes[0].lower(), "grande": partes[1], "pequeno": partes[2]}
-    return TARJETA.sub("", t).strip(), tarjeta
+    return TARJETA.sub("", t).strip(), tarjeta_de(m)
 
 
 def extraer_recordatorios(t):
     """Quita las etiquetas [RECORDAR fecha hora|texto] y devuelve (texto, [recordatorios])."""
-    lista = [{"cuando": m.group(1).replace("T", " "), "texto": m.group(2).strip()} for m in RECORDAR.finditer(t)]
+    lista = [recordatorio_de(m) for m in RECORDAR.finditer(t)]
     return RECORDAR.sub("", t).strip(), lista
 
 
 def limpiar_para_voz(t):
-    t = RECORDAR.sub("", TARJETA.sub("", t))
+    t = RECORDAR.sub("", TARJETA.sub("", t)).replace(MARCA, "")
     t = re.sub(r"```.*?```", " (código omitido) ", t, flags=re.S)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
@@ -130,7 +148,13 @@ def pitido():
 
 
 def leer_sesion():
-    return open(SESSION_FILE).read().strip() if os.path.exists(SESSION_FILE) else None
+    if not os.path.exists(SESSION_FILE):
+        return None
+    if time.time() - os.path.getmtime(SESSION_FILE) > CONFIG["minutos_conversacion"] * 60:
+        log("Conversación nueva tras", CONFIG["minutos_conversacion"], "minutos sin hablar")
+        borrar_sesion()
+        return None
+    return open(SESSION_FILE).read().strip()
 
 
 def borrar_sesion():
@@ -156,6 +180,7 @@ class Asistente:
         self.vosk = vosk
         self.avisar = avisar
         self.hijo = None
+        self.hijo_claude = None
         self.cancelado = False
         self.ocupado = False
         self.pausa_despertador = False  # p. ej. mientras hay un juego a pantalla completa
@@ -178,8 +203,9 @@ class Asistente:
 
     def cancelar(self):
         self.cancelado = True
-        if self.hijo and self.hijo.poll() is None:
-            self.hijo.kill()
+        for hijo in (self.hijo, self.hijo_claude):
+            if hijo and hijo.poll() is None:
+                hijo.kill()
 
     def _comprobar(self):
         if self.cancelado:
@@ -279,28 +305,103 @@ class Asistente:
             log("Error de Whisper:", repr(e))
             return ""
 
-    def claude(self, orden, permisos, sesion, reintentar=True):
+    def claude(self, orden, permisos, sesion, modelo="", esfuerzo="", reintentar=True):
+        """Llama a Claude Code y va diciendo la respuesta en voz alta frase a frase según llega.
+
+        Las etiquetas ([MOSTRAR], [RECORDAR]) se aplican en cuanto aparecen. Devuelve
+        (texto completo, si ya se dijo o mostró algo).
+        """
         prompt = PROMPT_SISTEMA + time.strftime(" Fecha y hora actuales: %Y-%m-%d %H:%M (%A).")
-        cmd = ["claude", "-p", orden, "--output-format", "json", "--permission-mode", permisos,
-               "--append-system-prompt", prompt]
+        cmd = ["claude", "-p", orden, "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+               "--permission-mode", permisos, "--append-system-prompt", prompt]
+        if modelo:
+            cmd += ["--model", modelo]
+        if esfuerzo:
+            cmd += ["--effort", esfuerzo]
         if sesion:
             cmd += ["--resume", sesion]
+        self._comprobar()
+        errores = tempfile.TemporaryFile("w+")
+        proc = self.hijo_claude = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errores, text=True,
+                                                   cwd=CONFIG["directorio"])
+        caducado = threading.Event()
+        reloj = threading.Timer(CONFIG["timeout_claude"], lambda: (caducado.set(), proc.kill()))
+        reloj.start()
+        cola = queue.Queue()
+        locutor = threading.Thread(target=self._locutor, args=(cola,), daemon=True)
+        locutor.start()
+        buffer, resultado, hablado = "", None, False
         try:
-            out, err = self.ejecutar(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                     cwd=CONFIG["directorio"], timeout=CONFIG["timeout_claude"])
-        except subprocess.TimeoutExpired:
-            return "Claude tardó demasiado en responder."
-        try:
-            datos = json.loads(out)
-        except json.JSONDecodeError:
-            log("Error de claude:", err or out)
-            if sesion and reintentar:  # la sesión guardada pudo caducar; reintenta limpia
+            for linea in proc.stdout:
+                try:
+                    ev = json.loads(linea)
+                except ValueError:
+                    continue
+                if ev.get("type") == "result":
+                    resultado = ev
+                if ev.get("type") != "stream_event":
+                    continue
+                e = ev["event"]
+                if e.get("type") == "content_block_delta" and e["delta"].get("type") == "text_delta":
+                    buffer += e["delta"]["text"]
+                elif e.get("type") != "content_block_stop":
+                    continue
+                frases, buffer, etiquetas = self._trocear(buffer, final=e.get("type") == "content_block_stop")
+                for f in frases:
+                    cola.put(f)
+                hablado = hablado or bool(frases) or etiquetas
+        finally:
+            reloj.cancel()
+            cola.put(None)
+            locutor.join()
+            proc.wait()
+            self.hijo_claude = None
+        self._comprobar()
+        if not resultado or resultado.get("is_error"):
+            errores.seek(0)
+            log("Error de claude:", errores.read()[-2000:] or resultado)
+            if caducado.is_set():
+                return "Claude tardó demasiado en responder.", hablado
+            if sesion and reintentar and not hablado:  # la sesión guardada pudo caducar; reintenta limpia
                 borrar_sesion()
-                return self.claude(orden, permisos, None, reintentar=False)
-            return "Hubo un error al hablar con Claude."
-        if datos.get("session_id"):
-            open(SESSION_FILE, "w").write(datos["session_id"])
-        return datos.get("result") or "Listo."
+                return self.claude(orden, permisos, None, modelo, esfuerzo, reintentar=False)
+            return "Hubo un error al hablar con Claude.", hablado
+        if resultado.get("session_id"):
+            open(SESSION_FILE, "w").write(resultado["session_id"])
+        return resultado.get("result") or "Listo.", hablado
+
+    def _trocear(self, buffer, final=False):
+        """Separa del texto recibido las frases ya completas (para decirlas) y aplica las etiquetas.
+
+        Devuelve (frases, resto del buffer, si había etiquetas).
+        """
+        etiquetas = False
+        for m in TARJETA.finditer(buffer):
+            self.avisar("mostrar", **tarjeta_de(m))
+            etiquetas = True
+        for m in RECORDAR.finditer(buffer):
+            self.avisar("recordar", **recordatorio_de(m))
+            etiquetas = True
+        buffer = RECORDAR.sub("", TARJETA.sub("", buffer))
+        if final:
+            corte = len(buffer)
+        else:
+            # No cortar dentro de una etiqueta a medio llegar, ni en trozos demasiado cortos.
+            limite = buffer.rfind("[") if buffer.rfind("[") > buffer.rfind("]") else len(buffer)
+            fines = [m.end() for m in re.finditer(r"[.!?…:;][\"»)]?(?=\s)|\n", buffer[:limite]) if m.end() >= 25]
+            corte = fines[-1] if fines else 0
+        frase = limpiar_para_voz(buffer[:corte])
+        return ([frase] if frase else []), buffer[corte:], etiquetas
+
+    def _locutor(self, cola):
+        """Hilo que dice en orden las frases que van llegando."""
+        while (frase := cola.get()) is not None:
+            if self.cancelado:
+                continue
+            try:
+                self.hablar(frase)
+            except Cancelado:
+                pass
 
     def responder(self, texto, estado="hablando"):
         texto, tarjeta = extraer_tarjeta(texto)
@@ -407,12 +508,15 @@ class Asistente:
 
         log("Orden:", orden)
         self.avisar("pensando", texto=orden)
-        respuesta = self.claude(orden, "plan", leer_sesion())
+        respuesta, hablado = self.claude(orden, "plan", leer_sesion(), CONFIG["modelo"], CONFIG["esfuerzo"])
+        if hablado:
+            log("Respuesta:", respuesta)
+        else:
+            self.responder(respuesta.replace(MARCA, ""))
         if MARCA not in respuesta:
-            self.responder(respuesta)
             return
 
-        self.responder(respuesta.replace(MARCA, "").strip() + " ¿Lo hago?", "confirmando")
+        self.hablar("¿Lo hago?", "confirmando")
         pitido()
         self.avisar("confirmando", texto="Di «sí» para confirmar")
         confirmacion = normalizar(self.escuchar(CONFIG["segundos_confirmacion"]))
@@ -422,8 +526,12 @@ class Asistente:
             self.responder("Vale, no hago nada.")
             return
         self.avisar("pensando", texto=orden)
-        self.responder(self.claude("El usuario ha confirmado por voz. Hazlo ahora y resume qué hiciste.",
-                                   CONFIG["permisos_confirmado"], leer_sesion()))
+        respuesta, hablado = self.claude("El usuario ha confirmado por voz. Hazlo ahora y resume qué hiciste.",
+                                         CONFIG["permisos_confirmado"], leer_sesion(), CONFIG["modelo_acciones"])
+        if hablado:
+            log("Respuesta:", respuesta)
+        else:
+            self.responder(respuesta)
 
 
 def enviar(orden):
