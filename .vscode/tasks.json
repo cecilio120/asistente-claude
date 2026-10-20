@@ -1,0 +1,10 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "Instalar", "type": "shell", "command": "./instalar.sh", "problemMatcher": [] },
+    { "label": "Reiniciar esfera", "type": "shell",
+      "command": "./venv/bin/python asistente.py salir; sleep 1; ./activar.sh", "problemMatcher": [] },
+    { "label": "Hablar (activar)", "type": "shell", "command": "./venv/bin/python asistente.py", "problemMatcher": [] },
+    { "label": "Ver registro", "type": "shell", "command": "tail -f asistente.log", "isBackground": true, "problemMatcher": [] }
+  ]
+}

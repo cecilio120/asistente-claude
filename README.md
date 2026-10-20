@@ -1,0 +1,120 @@
+# Asistente Claude 🔵
+
+Un asistente de voz para Linux con forma de **esfera holográfica flotante** (al estilo de los compañeros de IA de *Halo*) que usa [Claude Code](https://claude.com/claude-code) como cerebro. Pulsas un atajo o haces clic en la esfera, le hablas y Claude te responde en voz alta... y puede hacer cosas en tu PC, **siempre pidiéndote confirmación antes**.
+
+![Estados de la esfera](docs/estados.png)
+
+> Proyecto personal no oficial; no está afiliado ni respaldado por Anthropic.
+
+## Qué hace
+
+- 🎙️ **Pulsar para hablar**: no está escuchando todo el rato. Se activa con un atajo de teclado o un clic en la esfera.
+- 🧠 **Claude Code como cerebro**: puede responder preguntas, buscar información, leer archivos, abrir programas... todo lo que Claude Code sepa hacer en tu equipo (incluidos tus conectores/MCP).
+- 🛡️ **Seguro por defecto**: Claude trabaja primero en **modo solo lectura**. Si la tarea requiere cambiar algo, te dice qué haría y pregunta *«¿Lo hago?»*; solo actúa si respondes **«sí»**.
+- 🗣️ **Voz natural sin internet** con [Piper](https://github.com/rhasspy/piper), y reconocimiento de voz también local con [Vosk](https://alphacephei.com/vosk/). Lo único que sale de tu PC es lo que se envía a Claude.
+- 🔵 **Esfera animada**: duerme respirando suavemente, se ilumina al escucharte, sus anillos giran mientras piensa, late al ritmo de su voz y se vuelve ámbar al pedir confirmación. Muestra subtítulos.
+- 🎮 **Se oculta sola** con juegos o vídeos a pantalla completa (en KDE Plasma).
+- 💬 **Recuerda la conversación** entre usos. Di *«nueva conversación»* para empezar de cero.
+
+## Requisitos
+
+| | |
+|---|---|
+| **Sistema** | Linux con PipeWire o PulseAudio. Probado en **Bazzite / Fedora con KDE Plasma 6 (Wayland)**. |
+| **Claude Code** | Instalado y con sesión iniciada (suscripción Claude Pro/Max o clave de API). |
+| **Paquetes** | `python3` (3.10+), `parecord`/`pacat`/`paplay` (paquete `pulseaudio-utils` o `libpulse`), `curl`, `unzip` |
+| **Escritorio** | Cualquiera con XWayland o X11. La función de ocultarse con juegos necesita **KDE Plasma**. |
+
+## Instalación
+
+**1. Instala Claude Code** (si no lo tienes) e inicia sesión una vez:
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+claude        # inicia sesión y luego sal con /exit
+```
+
+**2. Descarga e instala el asistente:**
+
+```bash
+git clone https://github.com/cecilio120/asistente-claude.git ~/asistente-claude
+cd ~/asistente-claude
+./instalar.sh
+```
+
+El instalador crea un entorno de Python, descarga el modelo de reconocimiento de voz (~40 MB) y la voz (~60 MB), añade el lanzador al menú y te pregunta si quieres que la esfera arranque al iniciar sesión.
+
+**3. Asigna un atajo de teclado** al lanzador *«Asistente Claude (hablar)»*:
+
+- **KDE:** Preferencias del sistema → Teclado → Accesos rápidos → Añadir nuevo → Aplicación → *Asistente Claude (hablar)* → elige una tecla (p. ej. `Meta+C`).
+- **GNOME:** Configuración → Teclado → Atajos personalizados → comando: `~/asistente-claude/venv/bin/python ~/asistente-claude/asistente.py`
+
+¡Listo! Pulsa el atajo (o haz clic en la esfera), espera el pitido y habla.
+
+## Uso
+
+| Acción | Qué hace |
+|---|---|
+| **Atajo / clic en la esfera** | Empieza a escuchar. Si está ocupada, **cancela** lo que esté haciendo. |
+| **Arrastrar la esfera** | La mueve (recuerda la posición). |
+| **Clic derecho** | Menú: Hablar · Nueva conversación · Cerrar asistente. |
+| Decir **«nueva conversación»** | Olvida el contexto anterior. |
+| Decir **«sí» / «dale» / «adelante»** | Confirma una acción. Cualquier otra cosa (o silencio) la cancela. |
+
+**Colores de la esfera:** azul tenue = dormida · cian = escuchando · azul con anillos rápidos = pensando · cian latiendo = hablando · ámbar = esperando tu «sí» · rojo = error.
+
+## Configuración
+
+Edita `config.json` (se crea al instalar a partir de `config.example.json`) y reinicia la esfera:
+
+| Opción | Por defecto | Descripción |
+|---|---|---|
+| `microfono` | `""` | Micrófono a usar (vacío = el predeterminado). Lista los tuyos con `pactl list short sources`. |
+| `voz_piper` | `es_MX-claude-high` | Voz de Piper (archivo en `voces/`). |
+| `velocidad_piper` | `1.0` | Velocidad de la voz: >1 más lento, <1 más rápido. |
+| `permisos_confirmado` | `auto` | Permisos de Claude **tras confirmar**: `auto` o `acceptEdits` (solo editar archivos, sin ejecutar comandos). |
+| `directorio` | `~` | Carpeta donde trabaja Claude. |
+| `segundos_max_orden` | `15` | Tiempo máximo hablando. |
+| `segundos_confirmacion` | `6` | Tiempo para decir «sí». |
+| `escala_orbe` | `1.0` | Tamaño de la esfera. |
+| `subtitulos` | `true` | Mostrar el texto debajo de la esfera. |
+
+**Cambiar de voz:** hay voces en español de España, México y Argentina en el [catálogo de Piper](https://huggingface.co/rhasspy/piper-voices/tree/main/es). Por ejemplo:
+
+```bash
+VOZ=es_ES-davefx-medium ./instalar.sh
+```
+
+## Activar, desactivar y desinstalar
+
+```bash
+./desactivar.sh    # cierra la esfera y la quita del inicio automático (no borra nada)
+./activar.sh       # la vuelve a poner en el inicio automático y la abre
+./desinstalar.sh   # lo elimina todo (pide confirmación)
+```
+
+El atajo de teclado hay que quitarlo a mano desde la configuración del sistema.
+
+## Solución de problemas
+
+- **No me escucha:** probablemente está usando otro micrófono. Mira `pactl list short sources` y pon el nombre correcto en `microfono` dentro de `config.json`. Comprueba también que no esté silenciado.
+- **No responde / error en rojo:** revisa `asistente.log`. Asegúrate de que `claude -p "hola"` funciona en una terminal.
+- **La esfera no aparece:** ejecuta `./venv/bin/python orbe.py` en una terminal para ver el error. Necesita XWayland (viene activado por defecto en KDE y GNOME).
+- **Entiende mal lo que digo:** el modelo de voz pequeño prioriza la velocidad. Habla cerca del micrófono; Claude está avisado de que puede haber errores de transcripción e intenta deducir la intención.
+
+## Desarrollo
+
+Abre la carpeta en VS Code (`code ~/asistente-claude`) e instala las extensiones recomendadas. Hay tareas (`Ctrl+Shift+P` → *Run Task*) para instalar, reiniciar la esfera, activarla o ver el registro, y configuraciones de depuración para `orbe.py`.
+
+> **VS Code desde Flatpak:** el editor corre en un sandbox, así que para ejecutar o depurar usa la terminal del sistema, o da acceso al host con `flatpak override --user --talk-name=org.freedesktop.Flatpak com.visualstudio.code` y abre la terminal integrada con `host-spawn`.
+
+| Archivo | Qué es |
+|---|---|
+| `orbe.py` | La esfera (PyQt6): dibujo, animaciones, ratón, socket local y D-Bus. |
+| `asistente.py` | El núcleo: micrófono → Vosk → Claude Code → Piper. Ejecutado directamente, actúa como el «botón» del atajo. |
+| `kwin_pantalla_completa.js` | Script de KWin que avisa a la esfera cuando hay algo a pantalla completa. |
+| `instalar.sh` / `activar.sh` / `desactivar.sh` / `desinstalar.sh` | Instalación y gestión. |
+
+## Licencia
+
+[MIT](LICENSE)

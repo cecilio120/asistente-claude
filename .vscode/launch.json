@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Esfera (orbe.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/orbe.py",
+      "python": "${workspaceFolder}/venv/bin/python",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Esfera escuchando al arrancar",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/orbe.py",
+      "args": ["--activar"],
+      "python": "${workspaceFolder}/venv/bin/python",
+      "console": "integratedTerminal"
+    }
+  ]
+}

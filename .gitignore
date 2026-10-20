@@ -1,0 +1,12 @@
+# Entorno y modelos descargados por instalar.sh
+venv/
+modelo/
+voces/
+__pycache__/
+
+# Datos locales de cada usuario
+config.json
+asistente.log
+.sesion
+.orbe_pos
+.voz.wav

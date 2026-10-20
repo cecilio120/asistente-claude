@@ -1,0 +1,14 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "files.exclude": {
+    "**/__pycache__": true,
+    "venv": true,
+    "modelo": true
+  },
+  "files.watcherExclude": {
+    "**/venv/**": true,
+    "**/modelo/**": true,
+    "**/voces/**": true
+  }
+}
