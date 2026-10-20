@@ -39,7 +39,8 @@ CONFIG = {
     "segundos_confirmacion": 6,
     "timeout_claude": 600,
     "escala_orbe": 1.0,
-    "colores_fondo": True,  # la esfera toma los colores del fondo de escritorio
+    "colores_fondo": True,
+    "oye_claude": True,  # despertar diciendo «oye Claude» (escucha local con Vosk; nada sale del PC)  # la esfera toma los colores del fondo de escritorio
     "subtitulos": True,
 }
 CONFIG_PATH = os.path.join(DIR, "config.json")
@@ -69,9 +70,21 @@ PROMPT_SISTEMA = (
     "Ejemplos: [MOSTRAR reloj|17:42|martes 20 de octubre], [MOSTRAR lluvia|14°|Madrid, lluvia ligera], "
     "[MOSTRAR dato|1.234 €|total], [MOSTRAR temporizador|5:00|pasta]. No se lee en voz alta; no lo uses si no aporta nada. "
     "Para un temporizador o cuenta atrás no ejecutes nada ni pidas confirmación: con esa etiqueta (duración en m:ss "
-    "o h:mm:ss) la esfera lleva la cuenta, la muestra y avisa con un sonido al llegar a cero."
+    "o h:mm:ss) la esfera lleva la cuenta, la muestra y avisa con un sonido al llegar a cero. "
+    "Para recordatorios y alarmas tampoco ejecutes nada ni pidas confirmación: añade [RECORDAR AAAA-MM-DD HH:MM|texto breve] "
+    "con la fecha y hora absolutas (calcúlalas a partir de la fecha actual); a esa hora la esfera sonará, lo mostrará "
+    "y lo dirá en voz alta, aunque se reinicie el PC. Puedes poner varias etiquetas. Los pendientes se guardan en "
+    f"{os.path.join(DIR, 'recordatorios.json')} (para borrar alguno hay que editar ese archivo)."
 )
 TARJETA = re.compile(r"\[MOSTRAR\s+([^\]]*)\]")
+RECORDAR = re.compile(r"\[RECORDAR\s+(\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2})\s*\|([^\]]*)\]")
+# «Oye Claude»: Vosk solo puede elegir entre estas frases; las palabras de relleno absorben lo demás
+# para que «hola Claudia» u «oye claro» no se confundan con la frase.
+FRASE_DESPERTAR = re.compile(r"\b(oye|hey) (claude|cloud|clo)\b")
+GRAMATICA_DESPERTAR = json.dumps(
+    ["oye claude", "oye cloud", "oye clo", "hey claude", "[unk]"]
+    + ("hola claudia claro cloro oro todo como cómo que qué sí no ya hoy oigo oiga ojo ok okay voy vamos "
+       "ahora oye bueno entonces la el los de y a con por para en mira hey").split())
 SI = {"si", "hazlo", "dale", "vale", "adelante", "claro", "ok", "okay", "confirmo"}
 CANCELAR = {"nada", "cancela", "cancelar", "olvidalo", "no"}
 
@@ -96,8 +109,14 @@ def extraer_tarjeta(t):
     return TARJETA.sub("", t).strip(), tarjeta
 
 
+def extraer_recordatorios(t):
+    """Quita las etiquetas [RECORDAR fecha hora|texto] y devuelve (texto, [recordatorios])."""
+    lista = [{"cuando": m.group(1).replace("T", " "), "texto": m.group(2).strip()} for m in RECORDAR.finditer(t)]
+    return RECORDAR.sub("", t).strip(), lista
+
+
 def limpiar_para_voz(t):
-    t = TARJETA.sub("", t)
+    t = RECORDAR.sub("", TARJETA.sub("", t))
     t = re.sub(r"```.*?```", " (código omitido) ", t, flags=re.S)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
@@ -139,6 +158,7 @@ class Asistente:
         self.hijo = None
         self.cancelado = False
         self.ocupado = False
+        self.pausa_despertador = False  # p. ej. mientras hay un juego a pantalla completa
         vosk.SetLogLevel(-1)
         self.modelo = vosk.Model(os.path.join(DIR, "modelo"))
         self.whisper = None
@@ -250,7 +270,7 @@ class Asistente:
         """Transcribe con Whisper el audio grabado (s16le, 16 kHz)."""
         try:
             x = self.np.frombuffer(audio, dtype=self.np.int16).astype(self.np.float32) / 32768
-            segmentos, _ = self.whisper.transcribe(x, language="es", beam_size=5,
+            segmentos, _ = self.whisper.transcribe(x, language="es", beam_size=5, hotwords="Claude",
                                                    vad_filter=True, condition_on_previous_text=False)
             texto = " ".join(s.text.strip() for s in segmentos).strip()
             log("Vosk/Whisper:", texto)
@@ -260,8 +280,9 @@ class Asistente:
             return ""
 
     def claude(self, orden, permisos, sesion, reintentar=True):
+        prompt = PROMPT_SISTEMA + time.strftime(" Fecha y hora actuales: %Y-%m-%d %H:%M (%A).")
         cmd = ["claude", "-p", orden, "--output-format", "json", "--permission-mode", permisos,
-               "--append-system-prompt", PROMPT_SISTEMA]
+               "--append-system-prompt", prompt]
         if sesion:
             cmd += ["--resume", sesion]
         try:
@@ -283,17 +304,83 @@ class Asistente:
 
     def responder(self, texto, estado="hablando"):
         texto, tarjeta = extraer_tarjeta(texto)
+        texto, recordatorios = extraer_recordatorios(texto)
+        for r in recordatorios:
+            self.avisar("recordar", **r)
         if tarjeta:
             self.avisar("mostrar", **tarjeta)
         log("Respuesta:", texto)
         self.hablar(texto, estado)
 
-    def conversar(self):
-        """Una interacción completa: escuchar, pensar, responder (y confirmar si hace falta)."""
+    def anunciar(self, texto):
+        """Dice algo por iniciativa propia (p. ej. un recordatorio)."""
         self.ocupado = True
         self.cancelado = False
         try:
-            self._conversar()
+            self.responder(texto)
+        except Cancelado:
+            log("Cancelado")
+        finally:
+            self.ocupado = False
+            self.avisar("dormida")
+
+    def vigilar(self, al_oir):
+        """Hilo de fondo: escucha solo para detectar «oye Claude» y llama a al_oir(orden).
+
+        Si la frase sigue («oye Claude, ¿qué hora es?») se transcribe con Whisper y se pasa
+        el resto como orden; si no, orden = "" y se escucha después del pitido.
+        """
+        cmd = ["parecord", "--raw", "--format=s16le", f"--rate={RATE}", "--channels=1", "--latency-msec=60"]
+        if CONFIG["microfono"]:
+            cmd.append(f"--device={CONFIG['microfono']}")
+        mic = rec = None
+        trozos = []
+        while True:
+            if self.ocupado or self.pausa_despertador or not CONFIG["oye_claude"]:
+                if mic:
+                    mic.terminate()
+                    mic = None
+                time.sleep(0.3)
+                continue
+            if mic is None:
+                mic = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                rec = self.vosk.KaldiRecognizer(self.modelo, RATE, GRAMATICA_DESPERTAR)
+                rec.SetWords(True)
+                trozos = []
+            data = mic.stdout.read(CHUNK)
+            if not data:
+                mic = None
+                time.sleep(2)
+                continue
+            trozos = trozos[-160:] + [data]  # hasta ~10 s de la frase en curso
+            if not rec.AcceptWaveform(data):
+                continue
+            resultado = json.loads(rec.Result())
+            texto, audio, trozos = resultado.get("text", ""), b"".join(trozos), []
+            m = FRASE_DESPERTAR.search(texto)
+            if not m:
+                continue
+            confianza = [w["conf"] for w in resultado.get("result", []) if w["word"] in m.group(0).split()]
+            if min(confianza or [0]) < 0.8:
+                continue
+            mic.terminate()
+            mic = None
+            log("Despertado:", texto)
+            orden = ""
+            if texto[m.end():].strip() and self.whisper:
+                orden = re.sub(r"^\W*(oye|hey)\W+\w+\W*", "", self.transcribir(audio), flags=re.I).strip()
+            al_oir(orden)
+            time.sleep(1.5)  # deja que empiece la conversación antes de volver a vigilar
+
+    def conversar(self, orden=None):
+        """Una interacción completa: escuchar, pensar, responder (y confirmar si hace falta).
+
+        Con `orden` (dicha ya junto a «oye Claude») se salta la escucha.
+        """
+        self.ocupado = True
+        self.cancelado = False
+        try:
+            self._conversar(orden)
         except Cancelado:
             log("Cancelado")
         except Exception as e:
@@ -304,10 +391,11 @@ class Asistente:
             self.ocupado = False
             self.avisar("dormida")
 
-    def _conversar(self):
-        self.avisar("escuchando")
-        pitido()
-        orden = self.escuchar(CONFIG["segundos_max_orden"])
+    def _conversar(self, orden=None):
+        if not orden:
+            self.avisar("escuchando")
+            pitido()
+            orden = self.escuchar(CONFIG["segundos_max_orden"])
         n = normalizar(orden)
         if not n or n in CANCELAR:
             log("No se oyó ninguna orden (micrófono:", CONFIG["microfono"] or "predeterminado", ")")

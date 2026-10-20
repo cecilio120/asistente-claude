@@ -9,5 +9,6 @@
   "segundos_silencio": 1.2,
   "segundos_confirmacion": 6,
   "escala_orbe": 1.0,
-  "subtitulos": true
+  "subtitulos": true,
+  "oye_claude": true
 }

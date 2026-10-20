@@ -29,6 +29,8 @@ from PyQt6.QtWidgets import QApplication, QMenu, QWidget
 import asistente as nucleo
 
 POS_FILE = os.path.join(nucleo.DIR, ".orbe_pos")
+RECORDATORIOS = os.path.join(nucleo.DIR, "recordatorios.json")
+SONIDO_ALARMA = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
 SCRIPT_KWIN = os.path.join(nucleo.DIR, "kwin_pantalla_completa.js")
 NOMBRE_SCRIPT = "asistente-claude-pantalla-completa"
 
@@ -239,7 +241,26 @@ def icono_niebla(p, c, s, t):
     p.setPen(Qt.PenStyle.NoPen)
 
 
-ICONOS = {"sol": icono_sol, "luna": icono_luna, "nubes": icono_nubes, "parcial": icono_parcial,
+def icono_campana(p, c, s, t):
+    p.save()
+    p.translate(c.x(), c.y() - s * 0.7)
+    p.rotate(18 * math.sin(t * 7))  # se balancea colgando de arriba
+    oro = QColor(255, 210, 90)
+    campana = QPainterPath(QPointF(-s * 0.75, s * 1.15))
+    campana.cubicTo(QPointF(-s * 0.55, s * 1.0), QPointF(-s * 0.6, s * 0.2), QPointF(-s * 0.45, s * 0.05))
+    campana.cubicTo(QPointF(-s * 0.3, -s * 0.15), QPointF(s * 0.3, -s * 0.15), QPointF(s * 0.45, s * 0.05))
+    campana.cubicTo(QPointF(s * 0.6, s * 0.2), QPointF(s * 0.55, s * 1.0), QPointF(s * 0.75, s * 1.15))
+    campana.closeSubpath()
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(255, 240, 200))
+    p.drawEllipse(QPointF(s * 0.12 * math.sin(t * 7 + 1), s * 1.28), s * 0.16, s * 0.16)  # badajo
+    p.setBrush(oro)
+    p.drawPath(campana)
+    p.drawEllipse(QPointF(0, -s * 0.08), s * 0.1, s * 0.1)
+    p.restore()
+
+
+ICONOS = {"campana": icono_campana, "sol": icono_sol, "luna": icono_luna, "nubes": icono_nubes, "parcial": icono_parcial,
           "lluvia": icono_lluvia, "tormenta": icono_tormenta, "nieve": icono_nieve, "niebla": icono_niebla}
 
 
@@ -346,24 +367,91 @@ class Orbe(QWidget):
         self.temporizador = QTimer(self)
         self.temporizador.timeout.connect(self.animar)
         self.temporizador.start(16)
+        self.recordatorios, self.mtime_recordatorios, self.avisos_pendientes = [], None, []
+        self.leer_recordatorios()
+        self.reloj_recordatorios = QTimer(self)
+        self.reloj_recordatorios.timeout.connect(self.revisar_recordatorios)
+        self.reloj_recordatorios.start(1000)
         self.colocar()
         self.actualizar_mascara()
 
     # ---- asistente ----
     def cargar(self):
         self.asistente = nucleo.Asistente(lambda estado, **datos: self.puente.aviso.emit(estado, datos))
+        self.asistente.pausa_despertador = self.oculta_por_juego
+        threading.Thread(target=self.asistente.vigilar, daemon=True,
+                         args=(lambda orden: self.puente.aviso.emit("_despertar", {"orden": orden}),)).start()
         self.puente.aviso.emit("dormida", {})
         if self.pendiente_activar:
             self.puente.aviso.emit("_activar", {})
 
-    def activar(self):
+    def activar(self, orden=None):
         self.sorpresa = 1.0
         if not self.asistente:
             self.pendiente_activar = True
         elif self.asistente.ocupado:
             self.asistente.cancelar()
         else:
-            threading.Thread(target=self.asistente.conversar, daemon=True).start()
+            threading.Thread(target=self.asistente.conversar, args=(orden,), daemon=True).start()
+
+    def alternar_oye_claude(self):
+        nucleo.CONFIG["oye_claude"] = not nucleo.CONFIG["oye_claude"]
+        try:
+            config = json.load(open(nucleo.CONFIG_PATH)) if os.path.exists(nucleo.CONFIG_PATH) else {}
+            config["oye_claude"] = nucleo.CONFIG["oye_claude"]
+            json.dump(config, open(nucleo.CONFIG_PATH, "w"), indent=2, ensure_ascii=False)
+        except (OSError, ValueError) as e:
+            nucleo.log("No se pudo guardar config.json:", repr(e))
+        self.mostrar_subtitulo("«Oye Claude» activado" if nucleo.CONFIG["oye_claude"] else "«Oye Claude» desactivado")
+
+    # ---- recordatorios ----
+    def leer_recordatorios(self):
+        try:
+            self.recordatorios = json.load(open(RECORDATORIOS))
+            self.mtime_recordatorios = os.path.getmtime(RECORDATORIOS)
+        except (OSError, ValueError):
+            self.recordatorios = []
+
+    def guardar_recordatorios(self):
+        self.recordatorios.sort(key=lambda r: r["cuando"])
+        json.dump(self.recordatorios, open(RECORDATORIOS, "w"), indent=2, ensure_ascii=False)
+        self.mtime_recordatorios = os.path.getmtime(RECORDATORIOS)
+
+    def nuevo_recordatorio(self, datos):
+        self.recordatorios.append({"cuando": datos["cuando"], "texto": datos["texto"]})
+        self.guardar_recordatorios()
+        hoy = time.strftime("%Y-%m-%d")
+        dia, hora = datos["cuando"].split(" ")
+        self.mostrar_tarjeta({"icono": "campana", "grande": hora,
+                              "pequeno": datos["texto"] if dia == hoy else f"{dia[8:]}/{dia[5:7]} · {datos['texto']}"})
+
+    def revisar_recordatorios(self):
+        """Cada segundo: recarga el archivo si alguien lo editó y lanza los que ya tocan."""
+        try:
+            if os.path.getmtime(RECORDATORIOS) != self.mtime_recordatorios:
+                self.leer_recordatorios()
+        except OSError:
+            pass
+        ahora = time.strftime("%Y-%m-%d %H:%M")
+        vencidos = [r for r in self.recordatorios if r["cuando"] <= ahora]
+        if vencidos:
+            self.recordatorios = [r for r in self.recordatorios if r["cuando"] > ahora]
+            self.guardar_recordatorios()
+            for r in vencidos:
+                hora = r["cuando"][11:]
+                tarde = r["cuando"] < time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() - 120))
+                frase = (f"Tenías un recordatorio para las {hora}: {r['texto']}" if tarde
+                         else f"Recordatorio: {r['texto']}")
+                self.avisos_pendientes.append((r, frase))
+            if os.path.exists(SONIDO_ALARMA):
+                subprocess.Popen(["paplay", SONIDO_ALARMA], stderr=subprocess.DEVNULL)
+            if not self.isVisible():
+                self.show()
+        if self.avisos_pendientes and self.asistente and not self.asistente.ocupado:
+            r, frase = self.avisos_pendientes.pop(0)
+            self.sorpresa = 1.0
+            self.mostrar_tarjeta({"icono": "campana", "grande": r["cuando"][11:], "pequeno": r["texto"]})
+            threading.Thread(target=self.asistente.anunciar, args=(frase,), daemon=True).start()
 
     def nueva_conversacion(self):
         nucleo.borrar_sesion()
@@ -382,6 +470,13 @@ class Orbe(QWidget):
             QApplication.quit()
 
     def al_aviso(self, estado, datos):
+        if estado == "_despertar":
+            if self.asistente and not self.asistente.ocupado:
+                self.activar(datos.get("orden") or None)
+            return
+        if estado == "recordar":
+            self.nuevo_recordatorio(datos)
+            return
         if estado == "_activar":
             self.activar()
             return
@@ -406,6 +501,8 @@ class Orbe(QWidget):
     def pantalla_completa(self, activa):
         # Si está ocupada (p. ej. le hablaste con el atajo durante el juego) se muestra igual.
         self.oculta_por_juego = activa
+        if self.asistente:
+            self.asistente.pausa_despertador = activa
         if activa and self.estado == "dormida":
             self.hide()
         elif not self.isVisible():
@@ -941,6 +1038,9 @@ class Orbe(QWidget):
                            "QMenu::item{padding:6px 18px}QMenu::item:selected{background:#16406a}")
         menu.addAction("Hablar", self.activar)
         menu.addAction("Nueva conversación", self.nueva_conversacion)
+        oye = menu.addAction("Escuchar «Oye Claude»", self.alternar_oye_claude)
+        oye.setCheckable(True)
+        oye.setChecked(nucleo.CONFIG["oye_claude"])
         menu.addSeparator()
         menu.addAction("Cerrar asistente", QApplication.quit)
         menu.exec(ev.globalPos())

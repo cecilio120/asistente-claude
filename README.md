@@ -8,12 +8,13 @@ Un asistente de voz para Linux con forma de **gota de energía flotante con ojos
 
 ## Qué hace
 
-- 🎙️ **Pulsar para hablar**: no está escuchando todo el rato. Se activa con un atajo de teclado o un clic en la esfera.
+- 🎙️ **Di «Oye Claude»** (o pulsa el atajo o haz clic en la esfera). Puedes decirlo todo seguido: *«Oye Claude, ¿qué hora es?»*. La detección de la frase es 100 % local (Vosk con una gramática cerrada, muy ligera); no se envía nada hasta que la dices. Se pausa con juegos a pantalla completa y se puede desactivar desde el menú.
 - 🧠 **Claude Code como cerebro**: puede responder preguntas, buscar información, leer archivos, abrir programas... todo lo que Claude Code sepa hacer en tu equipo (incluidos tus conectores/MCP).
 - 🛡️ **Seguro por defecto**: Claude trabaja primero en **modo solo lectura**. Si la tarea requiere cambiar algo, te dice qué haría y pregunta *«¿Lo hago?»*; solo actúa si respondes **«sí»**.
 - 🗣️ **Voz natural sin internet** con [Piper](https://github.com/rhasspy/piper), y reconocimiento de voz también local: [Vosk](https://alphacephei.com/vosk/) detecta cuándo terminas de hablar y [Whisper](https://github.com/SYSTRAN/faster-whisper) transcribe con mucha más precisión. Lo único que sale de tu PC es lo que se envía a Claude.
 - 🔵 **Esfera animada**: una gota gelatinosa con luces que giran por dentro y un borde que ondula con la voz. Tiene ojos de luz que parpadean, siguen al ratón, miran hacia arriba al pensar, se cierran al dormir y sonríen al terminar de hablar. Rebota al hablar, se sorprende al hacerle clic y muestra subtítulos.
 - 🕒 **Muestra datos en la esfera**: si preguntas la hora, el clima o un dato corto, la gota se convierte unos segundos en un reloj que anda, un icono del tiempo animado (sol, nubes, lluvia, tormenta, nieve...) o un número grande. Con un **temporizador** muestra la cuenta atrás con un anillo de luz que se va vaciando y, al llegar a cero, suena una alarma y la gota estalla en chispas y vuelve a formarse. Claude lo indica con una etiqueta `[MOSTRAR icono|texto grande|texto pequeño]` que no se lee en voz alta.
+- ⏰ **Recordatorios y alarmas**: *«Recuérdame sacar la basura a las ocho»*. A esa hora suena una alarma, la esfera muestra una campana y te lo dice en voz alta. Se guardan en `recordatorios.json`, así que sobreviven a reinicios (si el PC estaba apagado, te avisa al volver).
 - 🎨 **Toma los colores de tu fondo de escritorio** (también de Wallpaper Engine) para combinar con él.
 - 🎮 **Se oculta sola** con juegos o vídeos a pantalla completa (en KDE Plasma).
 - 💬 **Recuerda la conversación** entre usos. Di *«nueva conversación»* para empezar de cero.
@@ -59,7 +60,8 @@ El instalador crea un entorno de Python, descarga los modelos de reconocimiento 
 |---|---|
 | **Atajo / clic en la esfera** | Empieza a escuchar. Si está ocupada, **cancela** lo que esté haciendo. |
 | **Arrastrar la esfera** | La mueve (recuerda la posición). |
-| **Clic derecho** | Menú: Hablar · Nueva conversación · Cerrar asistente. |
+| **«Oye Claude»** | Igual que el atajo; si sigues hablando sin pausa, lo que digas después es la orden. |
+| **Clic derecho** | Menú: Hablar · Nueva conversación · Escuchar «Oye Claude» (activar/desactivar) · Cerrar asistente. |
 | Decir **«nueva conversación»** | Olvida el contexto anterior. |
 | Decir **«sí» / «dale» / «adelante»** | Confirma una acción. Cualquier otra cosa (o silencio) la cancela. |
 
@@ -81,6 +83,7 @@ Edita `config.json` (se crea al instalar a partir de `config.example.json`) y re
 | `segundos_silencio` | `1.2` | Segundos de silencio tras los que deja de escucharte (súbelo si te corta al hacer pausas). |
 | `segundos_confirmacion` | `6` | Tiempo para decir «sí». |
 | `escala_orbe` | `1.0` | Tamaño de la esfera. |
+| `oye_claude` | `true` | Escuchar en segundo plano la frase «Oye Claude» (también desde el menú del clic derecho). |
 | `colores_fondo` | `true` | La esfera toma los colores del fondo de escritorio (KDE, imagen o Wallpaper Engine). |
 | `subtitulos` | `true` | Mostrar el texto debajo de la esfera. |
 
