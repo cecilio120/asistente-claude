@@ -34,7 +34,8 @@ CONFIG = {
     # Permisos al ejecutar una acción ya confirmada: "auto" o "acceptEdits" (más restrictivo).
     "permisos_confirmado": "auto",
     "directorio": os.path.expanduser("~"),
-    "segundos_max_orden": 15,
+    "segundos_max_orden": 30,
+    "segundos_silencio": 1.2,  # pausa tras la que deja de escucharte
     "segundos_confirmacion": 6,
     "timeout_claude": 600,
     "escala_orbe": 1.0,
@@ -179,7 +180,11 @@ class Asistente:
                       stdin=subprocess.PIPE, input=audio)
 
     def escuchar(self, max_segundos):
-        """Graba hasta que dejas de hablar (o se acaba el tiempo) y devuelve el texto."""
+        """Graba hasta que dejas de hablar (o se acaba el tiempo) y devuelve el texto.
+
+        Vosk corta en cada pausa corta; aquí se juntan esas frases y solo se para
+        tras `segundos_silencio` sin oír nada nuevo.
+        """
         cmd = ["parecord", "--raw", "--format=s16le", f"--rate={RATE}", "--channels=1",
                "--latency-msec=60"]
         if CONFIG["microfono"]:
@@ -187,7 +192,7 @@ class Asistente:
         self.hijo = mic = subprocess.Popen(cmd, stdout=subprocess.PIPE)
         rec = self.vosk.KaldiRecognizer(self.modelo, RATE)
         limite = time.time() + max_segundos
-        texto = ""
+        partes, parcial, t_voz = [], "", 0.0
         grabado = []
         try:
             while time.time() < limite:
@@ -199,15 +204,25 @@ class Asistente:
                 x = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32)
                 self.avisar("nivel", valor=min(1.0, float(self.np.sqrt((x ** 2).mean())) / 2500))
                 if rec.AcceptWaveform(data):
-                    texto = json.loads(rec.Result())["text"]
-                    if texto:
-                        break
+                    frase = json.loads(rec.Result())["text"]
+                    parcial = ""
+                    if frase:
+                        partes.append(frase)
+                        t_voz = time.time()
+                else:
+                    nuevo = json.loads(rec.PartialResult())["partial"]
+                    if nuevo != parcial:
+                        parcial = nuevo
+                        t_voz = time.time()
+                if partes and not parcial and time.time() - t_voz > CONFIG["segundos_silencio"]:
+                    break
             else:
-                texto = json.loads(rec.FinalResult())["text"]
+                partes.append(json.loads(rec.FinalResult())["text"])
         finally:
             mic.terminate()
             self.hijo = None
         self._comprobar()
+        texto = " ".join(p for p in partes if p)
         if texto and self.whisper:
             texto = self.transcribir(b"".join(grabado)) or texto
         return texto

@@ -76,7 +76,8 @@ Edita `config.json` (se crea al instalar a partir de `config.example.json`) y re
 | `velocidad_piper` | `1.0` | Velocidad de la voz: >1 más lento, <1 más rápido. |
 | `permisos_confirmado` | `auto` | Permisos de Claude **tras confirmar**: `auto` o `acceptEdits` (solo editar archivos, sin ejecutar comandos). |
 | `directorio` | `~` | Carpeta donde trabaja Claude. |
-| `segundos_max_orden` | `15` | Tiempo máximo hablando. |
+| `segundos_max_orden` | `30` | Tiempo máximo hablando. |
+| `segundos_silencio` | `1.2` | Segundos de silencio tras los que deja de escucharte (súbelo si te corta al hacer pausas). |
 | `segundos_confirmacion` | `6` | Tiempo para decir «sí». |
 | `escala_orbe` | `1.0` | Tamaño de la esfera. |
 | `colores_fondo` | `true` | La esfera toma los colores del fondo de escritorio (KDE, imagen o Wallpaper Engine). |
