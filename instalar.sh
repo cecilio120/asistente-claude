@@ -1,5 +1,5 @@
 #!/bin/bash
-# Instala el asistente: entorno de Python, modelo de voz a texto, voz de Piper,
+# Instala el asistente: entorno de Python, modelos de voz a texto (Vosk y Whisper), voz de Piper,
 # lanzador en el menú y (opcional) inicio automático. Se puede volver a ejecutar sin problema.
 set -e
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -42,6 +42,13 @@ if [ ! -d modelo ]; then
     mv vosk-model-small-es-* modelo
 fi
 verde "Modelo listo"
+
+WHISPER="$(./venv/bin/python -c 'import json,os; c=json.load(open("config.json")) if os.path.exists("config.json") else {}; print(c.get("whisper", "small"))')"
+if [ -n "$WHISPER" ]; then
+    echo "== Modelo de Whisper: $WHISPER (small ~460 MB) =="
+    ./venv/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('$WHISPER', device='cpu', compute_type='int8')"
+    verde "Whisper listo"
+fi
 
 echo "== Voz de Piper: $VOZ (~60 MB) =="
 mkdir -p voces

@@ -5,7 +5,8 @@ Ejecutado directamente (atajo de teclado) le dice a la esfera (orbe.py) que
 empiece a escuchar, o la arranca si no está abierta. Pulsarlo mientras está
 activa cancela lo que esté haciendo.
 
-La clase Asistente hace el trabajo: escucha tu petición (Vosk, sin internet),
+La clase Asistente hace el trabajo: escucha tu petición (Vosk detecta cuándo
+terminas de hablar y Whisper transcribe, todo sin internet),
 se la pasa a Claude Code en modo solo lectura y lee la respuesta con Piper. Si la
 tarea requiere hacer cambios, Claude explica qué haría y pide confirmación por
 voz; solo con un "sí" se ejecuta.
@@ -23,6 +24,8 @@ DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG = {
     # Micrófono (nombre de `pactl list short sources`); vacío = el predeterminado.
     "microfono": "",
+    # Modelo de faster-whisper (tiny, base, small, medium, large-v3...); vacío = solo Vosk.
+    "whisper": "small",
     # Voz de Piper (archivo en voces/ sin .onnx); si no existe se usa espeak-ng.
     "voz_piper": "es_MX-claude-high",
     "velocidad_piper": 1.0,  # >1 más lento, <1 más rápido
@@ -35,6 +38,7 @@ CONFIG = {
     "segundos_confirmacion": 6,
     "timeout_claude": 600,
     "escala_orbe": 1.0,
+    "colores_fondo": True,  # la esfera toma los colores del fondo de escritorio
     "subtitulos": True,
 }
 CONFIG_PATH = os.path.join(DIR, "config.json")
@@ -117,6 +121,13 @@ class Asistente:
         self.ocupado = False
         vosk.SetLogLevel(-1)
         self.modelo = vosk.Model(os.path.join(DIR, "modelo"))
+        self.whisper = None
+        if CONFIG["whisper"]:
+            try:
+                from faster_whisper import WhisperModel
+                self.whisper = WhisperModel(CONFIG["whisper"], device="cpu", compute_type="int8")
+            except Exception as e:
+                log("No se pudo cargar Whisper, uso Vosk:", repr(e))
         self.voz = None
         modelo_voz = os.path.join(DIR, "voces", CONFIG["voz_piper"] + ".onnx")
         if os.path.exists(modelo_voz):
@@ -177,12 +188,14 @@ class Asistente:
         rec = self.vosk.KaldiRecognizer(self.modelo, RATE)
         limite = time.time() + max_segundos
         texto = ""
+        grabado = []
         try:
             while time.time() < limite:
                 self._comprobar()
                 data = mic.stdout.read(CHUNK)
                 if not data:
                     break
+                grabado.append(data)
                 x = self.np.frombuffer(data, dtype=self.np.int16).astype(self.np.float32)
                 self.avisar("nivel", valor=min(1.0, float(self.np.sqrt((x ** 2).mean())) / 2500))
                 if rec.AcceptWaveform(data):
@@ -195,7 +208,22 @@ class Asistente:
             mic.terminate()
             self.hijo = None
         self._comprobar()
+        if texto and self.whisper:
+            texto = self.transcribir(b"".join(grabado)) or texto
         return texto
+
+    def transcribir(self, audio):
+        """Transcribe con Whisper el audio grabado (s16le, 16 kHz)."""
+        try:
+            x = self.np.frombuffer(audio, dtype=self.np.int16).astype(self.np.float32) / 32768
+            segmentos, _ = self.whisper.transcribe(x, language="es", beam_size=5,
+                                                   vad_filter=True, condition_on_previous_text=False)
+            texto = " ".join(s.text.strip() for s in segmentos).strip()
+            log("Vosk/Whisper:", texto)
+            return texto
+        except Exception as e:
+            log("Error de Whisper:", repr(e))
+            return ""
 
     def claude(self, orden, permisos, sesion, reintentar=True):
         cmd = ["claude", "-p", orden, "--output-format", "json", "--permission-mode", permisos,

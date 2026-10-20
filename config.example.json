@@ -1,5 +1,6 @@
 {
   "microfono": "",
+  "whisper": "small",
   "voz_piper": "es_MX-claude-high",
   "velocidad_piper": 1.0,
   "permisos_confirmado": "auto",

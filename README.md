@@ -1,6 +1,6 @@
 # Asistente Claude 🔵
 
-Un asistente de voz para Linux con forma de **esfera holográfica flotante** (al estilo de los compañeros de IA de *Halo*) que usa [Claude Code](https://claude.com/claude-code) como cerebro. Pulsas un atajo o haces clic en la esfera, le hablas y Claude te responde en voz alta... y puede hacer cosas en tu PC, **siempre pidiéndote confirmación antes**.
+Un asistente de voz para Linux con forma de **gota de energía flotante con ojos** que usa [Claude Code](https://claude.com/claude-code) como cerebro. Pulsas un atajo o haces clic en la esfera, le hablas y Claude te responde en voz alta... y puede hacer cosas en tu PC, **siempre pidiéndote confirmación antes**.
 
 ![Estados de la esfera](docs/estados.png)
 
@@ -11,8 +11,9 @@ Un asistente de voz para Linux con forma de **esfera holográfica flotante** (al
 - 🎙️ **Pulsar para hablar**: no está escuchando todo el rato. Se activa con un atajo de teclado o un clic en la esfera.
 - 🧠 **Claude Code como cerebro**: puede responder preguntas, buscar información, leer archivos, abrir programas... todo lo que Claude Code sepa hacer en tu equipo (incluidos tus conectores/MCP).
 - 🛡️ **Seguro por defecto**: Claude trabaja primero en **modo solo lectura**. Si la tarea requiere cambiar algo, te dice qué haría y pregunta *«¿Lo hago?»*; solo actúa si respondes **«sí»**.
-- 🗣️ **Voz natural sin internet** con [Piper](https://github.com/rhasspy/piper), y reconocimiento de voz también local con [Vosk](https://alphacephei.com/vosk/). Lo único que sale de tu PC es lo que se envía a Claude.
-- 🔵 **Esfera animada**: duerme respirando suavemente, se ilumina al escucharte, sus anillos giran mientras piensa, late al ritmo de su voz y se vuelve ámbar al pedir confirmación. Muestra subtítulos.
+- 🗣️ **Voz natural sin internet** con [Piper](https://github.com/rhasspy/piper), y reconocimiento de voz también local: [Vosk](https://alphacephei.com/vosk/) detecta cuándo terminas de hablar y [Whisper](https://github.com/SYSTRAN/faster-whisper) transcribe con mucha más precisión. Lo único que sale de tu PC es lo que se envía a Claude.
+- 🔵 **Esfera animada**: una gota gelatinosa con luces que giran por dentro y un borde que ondula con la voz. Tiene ojos de luz que parpadean, siguen al ratón, miran hacia arriba al pensar, se cierran al dormir y sonríen al terminar de hablar. Rebota al hablar, se sorprende al hacerle clic y muestra subtítulos.
+- 🎨 **Toma los colores de tu fondo de escritorio** (también de Wallpaper Engine) para combinar con él.
 - 🎮 **Se oculta sola** con juegos o vídeos a pantalla completa (en KDE Plasma).
 - 💬 **Recuerda la conversación** entre usos. Di *«nueva conversación»* para empezar de cero.
 
@@ -42,7 +43,7 @@ cd ~/asistente-claude
 ./instalar.sh
 ```
 
-El instalador crea un entorno de Python, descarga el modelo de reconocimiento de voz (~40 MB) y la voz (~60 MB), añade el lanzador al menú y te pregunta si quieres que la esfera arranque al iniciar sesión.
+El instalador crea un entorno de Python, descarga los modelos de reconocimiento de voz (Vosk ~40 MB y Whisper ~460 MB) y la voz (~60 MB), añade el lanzador al menú y te pregunta si quieres que la esfera arranque al iniciar sesión.
 
 **3. Asigna un atajo de teclado** al lanzador *«Asistente Claude (hablar)»*:
 
@@ -61,7 +62,7 @@ El instalador crea un entorno de Python, descarga el modelo de reconocimiento de
 | Decir **«nueva conversación»** | Olvida el contexto anterior. |
 | Decir **«sí» / «dale» / «adelante»** | Confirma una acción. Cualquier otra cosa (o silencio) la cancela. |
 
-**Colores de la esfera:** azul tenue = dormida · cian = escuchando · azul con anillos rápidos = pensando · cian latiendo = hablando · ámbar = esperando tu «sí» · rojo = error.
+**Colores de la esfera:** salen de tu fondo de escritorio. Con su color principal: tenue y con los ojos cerrados = dormida · brillante y rebotando = hablando. Con un color de acento (el segundo del fondo, o uno que contraste): escuchando · pensando (mirando hacia arriba). Naranja = esperando tu «sí» · rojo = error. Con `colores_fondo: false` usa los colores azules de siempre.
 
 ## Configuración
 
@@ -70,6 +71,7 @@ Edita `config.json` (se crea al instalar a partir de `config.example.json`) y re
 | Opción | Por defecto | Descripción |
 |---|---|---|
 | `microfono` | `""` | Micrófono a usar (vacío = el predeterminado). Lista los tuyos con `pactl list short sources`. |
+| `whisper` | `small` | Modelo de [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (`tiny`, `base`, `small`, `medium`, `large-v3`...). Más grande = más preciso pero más lento. Vacío = solo Vosk. |
 | `voz_piper` | `es_MX-claude-high` | Voz de Piper (archivo en `voces/`). |
 | `velocidad_piper` | `1.0` | Velocidad de la voz: >1 más lento, <1 más rápido. |
 | `permisos_confirmado` | `auto` | Permisos de Claude **tras confirmar**: `auto` o `acceptEdits` (solo editar archivos, sin ejecutar comandos). |
@@ -77,6 +79,7 @@ Edita `config.json` (se crea al instalar a partir de `config.example.json`) y re
 | `segundos_max_orden` | `15` | Tiempo máximo hablando. |
 | `segundos_confirmacion` | `6` | Tiempo para decir «sí». |
 | `escala_orbe` | `1.0` | Tamaño de la esfera. |
+| `colores_fondo` | `true` | La esfera toma los colores del fondo de escritorio (KDE, imagen o Wallpaper Engine). |
 | `subtitulos` | `true` | Mostrar el texto debajo de la esfera. |
 
 **Cambiar de voz:** hay voces en español de España, México y Argentina en el [catálogo de Piper](https://huggingface.co/rhasspy/piper-voices/tree/main/es). Por ejemplo:
@@ -100,7 +103,7 @@ El atajo de teclado hay que quitarlo a mano desde la configuración del sistema.
 - **No me escucha:** probablemente está usando otro micrófono. Mira `pactl list short sources` y pon el nombre correcto en `microfono` dentro de `config.json`. Comprueba también que no esté silenciado.
 - **No responde / error en rojo:** revisa `asistente.log`. Asegúrate de que `claude -p "hola"` funciona en una terminal.
 - **La esfera no aparece:** ejecuta `./venv/bin/python orbe.py` en una terminal para ver el error. Necesita XWayland (viene activado por defecto en KDE y GNOME).
-- **Entiende mal lo que digo:** el modelo de voz pequeño prioriza la velocidad. Habla cerca del micrófono; Claude está avisado de que puede haber errores de transcripción e intenta deducir la intención.
+- **Entiende mal lo que digo:** prueba un modelo de Whisper más grande (`"whisper": "medium"`) y habla cerca del micrófono. Claude está avisado de que puede haber errores de transcripción e intenta deducir la intención. En `asistente.log` puedes ver lo que entendió.
 
 ## Desarrollo
 
@@ -110,8 +113,8 @@ Abre la carpeta en VS Code (`code ~/asistente-claude`) e instala las extensiones
 
 | Archivo | Qué es |
 |---|---|
-| `orbe.py` | La esfera (PyQt6): dibujo, animaciones, ratón, socket local y D-Bus. |
-| `asistente.py` | El núcleo: micrófono → Vosk → Claude Code → Piper. Ejecutado directamente, actúa como el «botón» del atajo. |
+| `orbe.py` | La esfera (PyQt6): dibujo, ojos, animaciones, colores del fondo, ratón, socket local y D-Bus. |
+| `asistente.py` | El núcleo: micrófono → Vosk + Whisper → Claude Code → Piper. Ejecutado directamente, actúa como el «botón» del atajo. |
 | `kwin_pantalla_completa.js` | Script de KWin que avisa a la esfera cuando hay algo a pantalla completa. |
 | `instalar.sh` / `activar.sh` / `desactivar.sh` / `desinstalar.sh` | Instalación y gestión. |
 
