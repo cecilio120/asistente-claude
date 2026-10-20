@@ -51,7 +51,9 @@ OJOS = {
     "confirmando": (1.05, 0.2),
     "error":       (0.55, 0.0),
 }
-ANCHO, ALTO = 420, 360
+ANCHO, ALTO = 420, 400
+CENTRO_Y = 160  # centro de la esfera dentro de la ventana
+ZONA = 150  # radio de la zona circular de la ventana; el brillo se desvanece antes de llegar al borde
 RADIO = 46
 RETRASO_AUDIO = 0.12
 SEGUNDOS_TARJETA = 10  # lo que sigue visible la tarjeta tras terminar de hablar  # lo que tarda el audio en salir por los altavoces
@@ -472,7 +474,7 @@ class Orbe(QWidget):
         elif ahora - self.t_cursor < 3:
             s = self.escala
             dx = cursor.x() - (self.x() + ANCHO / 2 * s)
-            dy = cursor.y() - (self.y() + 130 * s)
+            dy = cursor.y() - (self.y() + CENTRO_Y * s)
             d = math.hypot(dx, dy) or 1
             k = min(1.0, d / 250)
             objetivo = (dx / d * k, dy / d * k)
@@ -619,7 +621,7 @@ class Orbe(QWidget):
     def centro(self):
         t = time.time() - self.t0
         flotar = math.sin(t * 1.1) * 5 + math.sin(t * 0.47) * 2
-        return QPointF(ANCHO / 2, 130 + flotar)
+        return QPointF(ANCHO / 2, CENTRO_Y + flotar)
 
     def contorno(self, c, r, t):
         """Borde de gota que ondula: más cuanto más fuerte suena la voz."""
@@ -662,7 +664,8 @@ class Orbe(QWidget):
 
         p.setPen(Qt.PenStyle.NoPen)
         # Halo exterior que late
-        rh = r * (2.3 + 0.4 * e)
+        # Sin pasarse de la zona, para que el halo llegue a cero antes del borde y no se vea un círculo cortado.
+        rh = min(r * (2.3 + 0.4 * e), ZONA - 22)
         g = QRadialGradient(c, rh)
         g.setColorAt(0, tono(0.5 * b * (0.7 + 0.6 * e)))
         g.setColorAt(0.4, tono(0.18 * b))
@@ -724,10 +727,12 @@ class Orbe(QWidget):
         for angulo, radio, vel in self.particulas:
             a = angulo + self.rotacion * vel
             rr = r * (radio - 0.1) + extra
+            limite = ZONA - 30
+            rr = min(rr, limite)  # no se sale de la zona; cerca del borde se apaga (ver alfa abajo)
             pos = QPointF(c.x() + math.cos(a) * rr, c.y() + math.sin(a) * rr * 0.85)
             tam = 1.4 + 1.2 * (0.5 + 0.5 * math.sin(t * 3 + angulo * 5))
             g = QRadialGradient(pos, tam * 3)
-            g.setColorAt(0, tono(visibles * b, 190))
+            g.setColorAt(0, tono(visibles * b * min(1.0, (limite + 8 - rr) / 20), 190))
             g.setColorAt(1, tono(0, 190))
             p.setBrush(g)
             p.drawEllipse(pos, tam * 3, tam * 3)
@@ -741,7 +746,7 @@ class Orbe(QWidget):
         p.setFont(fuente)
         caja = QFontMetrics(fuente).boundingRect(QRect(0, 0, 360, 200), Qt.TextFlag.TextWordWrap, self.subtitulo)
         w, h = caja.width() + 28, caja.height() + 16
-        rect = QRectF((ANCHO - w) / 2, 250, w, min(h, ALTO - 254))
+        rect = QRectF((ANCHO - w) / 2, CENTRO_Y + 120, w, min(h, ALTO - CENTRO_Y - 124))
         a = self.alfa_sub
         fondo = QColor(8, 18, 32)
         fondo.setAlphaF(0.78 * a)
@@ -757,11 +762,12 @@ class Orbe(QWidget):
     def actualizar_mascara(self):
         """Solo la esfera (y el subtítulo si se ve) reciben clics; el resto deja pasar el ratón."""
         s = self.escala
-        rr = int(RADIO * 2.4 * s)
-        cx, cy = int(ANCHO / 2 * s), int(130 * s)
+        rr = int(ZONA * s)
+        cx, cy = int(ANCHO / 2 * s), int(CENTRO_Y * s)
         region = QRegion(QRect(cx - rr, cy - rr, rr * 2, rr * 2), QRegion.RegionType.Ellipse)
         if self.alfa_sub > 0:
-            region = region.united(QRegion(QRect(0, int(245 * s), self.width(), self.height() - int(245 * s))))
+            y = int((CENTRO_Y + 115) * s)
+            region = region.united(QRegion(QRect(0, y, self.width(), self.height() - y)))
         self.setMask(region)
 
     # ---- ratón ----
