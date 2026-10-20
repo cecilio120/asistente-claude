@@ -11,6 +11,7 @@ import json
 import math
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -52,7 +53,8 @@ OJOS = {
 }
 ANCHO, ALTO = 420, 360
 RADIO = 46
-RETRASO_AUDIO = 0.12  # lo que tarda el audio en salir por los altavoces
+RETRASO_AUDIO = 0.12
+SEGUNDOS_TARJETA = 10  # lo que sigue visible la tarjeta tras terminar de hablar  # lo que tarda el audio en salir por los altavoces
 
 
 def mezclar(a, b, k):
@@ -129,6 +131,114 @@ def colores_del_fondo():
         ESTADOS[estado] = (rgb(h, s, v),) + ESTADOS[estado][1:]
 
 
+# ---- iconos del tiempo para las tarjetas: (painter, centro, tamaño, t) ----
+SOL, NUBE, AGUA = QColor(255, 205, 80), QColor(240, 245, 252), QColor(130, 200, 255)
+
+
+def _sol(p, c, s, t, escala=1.0):
+    s *= escala
+    pen = QPen(SOL, max(1.5, s * 0.12))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    for i in range(8):
+        a = t * 0.6 + i * math.pi / 4
+        p.drawLine(QPointF(c.x() + math.cos(a) * s * 0.72, c.y() + math.sin(a) * s * 0.72),
+                   QPointF(c.x() + math.cos(a) * s, c.y() + math.sin(a) * s))
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(SOL)
+    p.drawEllipse(c, s * 0.5, s * 0.5)
+
+
+def _nube(p, c, s, t, color=NUBE):
+    c = QPointF(c.x() + math.sin(t * 0.8) * s * 0.06, c.y())
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(color)
+    for dx, dy, rr in ((-0.45, 0.12, 0.38), (0.0, -0.12, 0.5), (0.45, 0.1, 0.4)):
+        p.drawEllipse(QPointF(c.x() + dx * s, c.y() + dy * s), rr * s, rr * s)
+    p.drawRoundedRect(QRectF(c.x() - 0.8 * s, c.y() + 0.05 * s, 1.6 * s, 0.45 * s), 0.2 * s, 0.2 * s)
+
+
+def _caer(p, c, s, t, dibujar, vel):
+    for i in range(4):
+        x = c.x() + (-0.5 + i / 3) * s
+        y = c.y() + s * 0.65 + ((t * vel + i * 0.37) % 1) * s * 0.6
+        dibujar(QPointF(x, y))
+
+
+def icono_sol(p, c, s, t):
+    _sol(p, c, s, t)
+
+
+def icono_luna(p, c, s, t):
+    camino = QPainterPath()
+    camino.addEllipse(c, s * 0.6, s * 0.6)
+    hueco = QPainterPath()
+    hueco.addEllipse(QPointF(c.x() + s * 0.3, c.y() - s * 0.2), s * 0.5, s * 0.5)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.setBrush(QColor(255, 236, 170))
+    p.drawPath(camino.subtracted(hueco))
+    for i, (dx, dy) in enumerate(((0.6, 0.45), (0.85, -0.55), (-0.8, -0.6))):
+        a = 0.4 + 0.6 * abs(math.sin(t * 1.5 + i * 2))
+        p.setBrush(QColor(255, 255, 255, int(255 * a)))
+        p.drawEllipse(QPointF(c.x() + dx * s, c.y() + dy * s), s * 0.06, s * 0.06)
+
+
+def icono_nubes(p, c, s, t):
+    _nube(p, QPointF(c.x() + s * 0.25, c.y() - s * 0.2), s * 0.7, t + 1, QColor(200, 210, 225))
+    _nube(p, c, s, t)
+
+
+def icono_parcial(p, c, s, t):
+    _sol(p, QPointF(c.x() + s * 0.3, c.y() - s * 0.3), s, t, 0.7)
+    _nube(p, QPointF(c.x() - s * 0.1, c.y() + s * 0.1), s * 0.85, t)
+
+
+def icono_lluvia(p, c, s, t):
+    pen = QPen(AGUA, max(1.5, s * 0.1))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+
+    def gota(q):
+        p.setPen(pen)
+        p.drawLine(q, QPointF(q.x() - s * 0.06, q.y() + s * 0.2))
+    _caer(p, c, s, t, gota, 1.6)
+    p.setPen(Qt.PenStyle.NoPen)
+    _nube(p, QPointF(c.x(), c.y() - s * 0.15), s, t, QColor(215, 225, 240))
+
+
+def icono_tormenta(p, c, s, t):
+    icono_lluvia(p, c, s, t)
+    if (t % 2.2) < 0.25:
+        rayo = QPainterPath(QPointF(c.x() + s * 0.05, c.y() + s * 0.3))
+        for dx, dy in ((-0.2, 0.75), (0.02, 0.72), (-0.12, 1.15), (0.25, 0.6), (0.03, 0.62), (0.15, 0.3)):
+            rayo.lineTo(QPointF(c.x() + dx * s, c.y() + dy * s))
+        p.setBrush(QColor(255, 225, 90))
+        p.drawPath(rayo)
+
+
+def icono_nieve(p, c, s, t):
+    def copo(q):
+        p.setBrush(QColor(255, 255, 255))
+        p.drawEllipse(q, s * 0.08, s * 0.08)
+    p.setPen(Qt.PenStyle.NoPen)
+    _caer(p, c, s, t, copo, 0.6)
+    _nube(p, QPointF(c.x(), c.y() - s * 0.15), s, t)
+
+
+def icono_niebla(p, c, s, t):
+    pen = QPen(QColor(235, 240, 248, 220), max(2.0, s * 0.14))
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    for i in range(4):
+        dx = math.sin(t * 0.9 + i * 1.7) * s * 0.18
+        y = c.y() + (-0.45 + i * 0.3) * s
+        p.drawLine(QPointF(c.x() - s * 0.75 + dx, y), QPointF(c.x() + s * 0.75 + dx, y))
+    p.setPen(Qt.PenStyle.NoPen)
+
+
+ICONOS = {"sol": icono_sol, "luna": icono_luna, "nubes": icono_nubes, "parcial": icono_parcial,
+          "lluvia": icono_lluvia, "tormenta": icono_tormenta, "nieve": icono_nieve, "niebla": icono_niebla}
+
+
 class Puente(QObject):
     """Lleva los avisos del hilo del asistente al hilo de la interfaz."""
     aviso = pyqtSignal(str, dict)
@@ -195,6 +305,7 @@ class Orbe(QWidget):
         self.apertura, self.alegria = 0.3, 0.0
         self.mirada = [0.0, 0.0]
         self.sorpresa, self.inclinacion, self.t_feliz = 0.0, 0.0, 0.0
+        self.tarjeta, self.mezcla_tarjeta, self.t_fin_tarjeta = None, 0.0, 0.0
         self.objetivo_mirada, self.t_mirada = (0.0, 0.0), 0.0
         self.cursor_previo, self.t_cursor = QCursor.pos(), 0.0
         self.t_parpadeo = time.time() + random.uniform(2, 5)
@@ -254,6 +365,9 @@ class Orbe(QWidget):
         if estado == "_activar":
             self.activar()
             return
+        if estado == "mostrar":
+            self.mostrar_tarjeta(datos)
+            return
         if estado == "nivel":
             self.nivel_mic = datos["valor"]
             return
@@ -308,6 +422,15 @@ class Orbe(QWidget):
             objetivo = 0.2
         self.energia = mezclar(self.energia, objetivo, 0.35 if objetivo > self.energia else 0.12)
         self.animar_ojos(ahora, t)
+        # La tarjeta (hora, clima...) sustituye a la cara hasta unos segundos después de terminar.
+        if self.tarjeta and self.estado == "escuchando":
+            self.tarjeta = None
+        if self.tarjeta and self.estado != "dormida":
+            self.t_fin_tarjeta = ahora + SEGUNDOS_TARJETA
+        activa = bool(self.tarjeta) and ahora < self.t_fin_tarjeta
+        self.mezcla_tarjeta = mezclar(self.mezcla_tarjeta, 1.0 if activa else 0.0, 0.1)
+        if not activa and self.mezcla_tarjeta < 0.01:
+            self.mezcla_tarjeta, self.tarjeta = 0.0, None
 
         # El subtítulo se queda mientras está activa y se desvanece unos segundos después.
         visible = bool(self.subtitulo) and (self.estado != "dormida" or ahora - self.t_subtitulo < 6)
@@ -423,6 +546,76 @@ class Orbe(QWidget):
                 p.setPen(Qt.PenStyle.NoPen)
             p.restore()
 
+    def mostrar_tarjeta(self, datos):
+        datos = dict(datos)
+        if datos.get("icono") == "reloj":
+            # Se guarda la diferencia con la hora local para que el reloj siga andando (sirve para otras zonas).
+            m = re.search(r"(\d{1,2})[:.](\d{2})", datos.get("grande", ""))
+            ahora = time.localtime()
+            local = ahora.tm_hour * 60 + ahora.tm_min
+            datos["desfase"] = ((int(m.group(1)) * 60 + int(m.group(2)) - local + 720) % 1440 - 720) if m else 0
+        self.tarjeta = datos
+        self.t_fin_tarjeta = time.time() + SEGUNDOS_TARJETA
+
+    def dibujar_tarjeta(self, p, c, r, t):
+        """Dibuja dentro de la gota un icono animado y el dato (hora, temperatura...)."""
+        d = self.tarjeta
+        icono, grande, pequeno = d.get("icono", "dato"), d.get("grande", ""), d.get("pequeno", "")
+        blanco = QColor(250, 252, 255)
+        p.setPen(Qt.PenStyle.NoPen)
+        if icono == "reloj":
+            s = time.time() + d.get("desfase", 0) * 60
+            hora = time.localtime(s)
+            grande = time.strftime("%H:%M", hora)
+            self.icono_reloj(p, QPointF(c.x(), c.y() - r * 0.18), r * 0.5, hora, s % 60)
+            centro_texto, tam = c.y() + r * 0.58, r * 0.27
+        elif icono == "dato" or icono not in ICONOS:
+            centro_texto, tam = c.y(), r * 0.5
+        else:
+            ICONOS[icono](p, QPointF(c.x(), c.y() - r * 0.3), r * 0.36, t)
+            centro_texto, tam = c.y() + r * 0.4, r * 0.42
+        if grande:
+            fuente = QFont("Noto Sans", 10, QFont.Weight.Bold)
+            fuente.setPixelSize(max(8, int(tam)))
+            while QFontMetrics(fuente).horizontalAdvance(grande) > r * 1.6 and fuente.pixelSize() > 8:
+                fuente.setPixelSize(fuente.pixelSize() - 1)
+            p.setFont(fuente)
+            caja = QRectF(c.x() - r, centro_texto - tam, r * 2, tam * 2)
+            p.setPen(QColor(0, 0, 0, 90))
+            p.drawText(caja.translated(0, 1.5), Qt.AlignmentFlag.AlignCenter, grande)
+            p.setPen(blanco)
+            p.drawText(caja, Qt.AlignmentFlag.AlignCenter, grande)
+        if pequeno:
+            fuente = QFont("Noto Sans", 9)
+            p.setFont(fuente)
+            p.setPen(QColor(235, 245, 255, 230))
+            p.drawText(QRectF(c.x() - 150, c.y() + r * 1.12, 300, 22), Qt.AlignmentFlag.AlignCenter,
+                       QFontMetrics(fuente).elidedText(pequeno, Qt.TextElideMode.ElideRight, 290))
+        p.setPen(Qt.PenStyle.NoPen)
+
+    def icono_reloj(self, p, c, radio, hora, segundos):
+        p.setBrush(QColor(255, 255, 255, 40))
+        p.setPen(QPen(QColor(255, 255, 255, 220), 1.6))
+        p.drawEllipse(c, radio, radio)
+        for i in range(12):
+            a = i * math.pi / 6
+            largo = 0.8 if i % 3 == 0 else 0.87
+            p.drawLine(QPointF(c.x() + math.sin(a) * radio * largo, c.y() - math.cos(a) * radio * largo),
+                       QPointF(c.x() + math.sin(a) * radio * 0.95, c.y() - math.cos(a) * radio * 0.95))
+        minutos = hora.tm_min + segundos / 60
+        horas = hora.tm_hour % 12 + minutos / 60
+        for angulo, largo, grosor, color in ((horas / 12, 0.5, 3.0, QColor(255, 255, 255)),
+                                             (minutos / 60, 0.75, 2.0, QColor(255, 255, 255)),
+                                             (segundos / 60, 0.82, 1.0, QColor(255, 190, 90))):
+            a = angulo * 2 * math.pi
+            pen = QPen(color, grosor)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawLine(c, QPointF(c.x() + math.sin(a) * radio * largo, c.y() - math.cos(a) * radio * largo))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(255, 255, 255))
+        p.drawEllipse(c, 2.2, 2.2)
+
     def centro(self):
         t = time.time() - self.t0
         flotar = math.sin(t * 1.1) * 5 + math.sin(t * 0.47) * 2
@@ -450,7 +643,8 @@ class Orbe(QWidget):
         t = time.time() - self.t0
         c = self.centro()
         e, b = self.energia, self.brillo
-        r = RADIO * (1 + 0.12 * e)
+        m = self.mezcla_tarjeta
+        r = RADIO * (1 + 0.12 * e) * (1 + 0.3 * m)
         col = QColor(*[int(x) for x in self.color])
         # Al hablar rebota y se aplasta con la voz; con la sorpresa se estira.
         voz = e if self.estado in ("hablando", "confirmando") else 0.0
@@ -503,6 +697,11 @@ class Orbe(QWidget):
         g.setColorAt(1, QColor(255, 255, 255, 0))
         p.setBrush(g)
         p.drawEllipse(QPointF(c.x() - r * 0.35, c.y() - r * 0.5), r * 0.5, r * 0.32)
+        if m > 0.01:  # con tarjeta, el interior se oscurece como una pantalla para que se lea bien
+            pantalla = col.darker(420)
+            pantalla.setAlphaF(0.72 * m)
+            p.setBrush(pantalla)
+            p.drawPath(gota)
         p.restore()
 
         # Borde luminoso
@@ -511,7 +710,13 @@ class Orbe(QWidget):
         p.drawPath(gota)
         p.setPen(Qt.PenStyle.NoPen)
 
-        self.dibujar_cara(p, c, r, tono)
+        if m < 0.99:
+            p.setOpacity(1 - m)
+            self.dibujar_cara(p, c, r, tono)
+        if m > 0.01 and self.tarjeta:
+            p.setOpacity(m)
+            self.dibujar_tarjeta(p, c, r, t)
+        p.setOpacity(1)
 
         # Chispas en órbita (más y más lejos cuando está activa)
         extra = 14 * self.nivel_mic if self.estado == "escuchando" else 8 * e

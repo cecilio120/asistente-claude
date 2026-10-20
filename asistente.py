@@ -62,8 +62,14 @@ PROMPT_SISTEMA = (
     "sin bloques de código ni rutas largas. "
     f"Ahora mismo estás en modo solo lectura. Si la petición requiere cambiar algo (ejecutar programas, "
     f"editar o borrar archivos, instalar, cambiar ajustes...), NO lo intentes: explica en una frase qué harías "
-    f"y termina tu respuesta exactamente con {MARCA}. El usuario confirmará por voz y entonces podrás hacerlo."
+    f"y termina tu respuesta exactamente con {MARCA}. El usuario confirmará por voz y entonces podrás hacerlo. "
+    "La esfera puede mostrar un dato breve en lugar de su cara: si tu respuesta incluye la hora, el clima, "
+    "una temperatura, un temporizador o un número corto, añade al final [MOSTRAR icono|texto grande|texto pequeño], "
+    "con icono uno de: reloj, sol, luna, nubes, parcial, lluvia, tormenta, nieve, niebla, dato. "
+    "Ejemplos: [MOSTRAR reloj|17:42|martes 20 de octubre], [MOSTRAR lluvia|14°|Madrid, lluvia ligera], "
+    "[MOSTRAR dato|1.234 €|total]. No se lee en voz alta; no lo uses si no aporta nada."
 )
+TARJETA = re.compile(r"\[MOSTRAR\s+([^\]]*)\]")
 SI = {"si", "hazlo", "dale", "vale", "adelante", "claro", "ok", "okay", "confirmo"}
 CANCELAR = {"nada", "cancela", "cancelar", "olvidalo", "no"}
 
@@ -78,7 +84,18 @@ def normalizar(t):
     return "".join(c for c in t if unicodedata.category(c) != "Mn").strip(" .,!?¿¡")
 
 
+def extraer_tarjeta(t):
+    """Quita la etiqueta [MOSTRAR icono|grande|pequeño] y devuelve (texto, tarjeta o None)."""
+    m = TARJETA.search(t)
+    if not m:
+        return t, None
+    partes = [x.strip() for x in m.group(1).split("|")] + ["", ""]
+    tarjeta = {"icono": partes[0].lower(), "grande": partes[1], "pequeno": partes[2]}
+    return TARJETA.sub("", t).strip(), tarjeta
+
+
 def limpiar_para_voz(t):
+    t = TARJETA.sub("", t)
     t = re.sub(r"```.*?```", " (código omitido) ", t, flags=re.S)
     t = re.sub(r"`([^`]*)`", r"\1", t)
     t = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", t)
@@ -263,6 +280,9 @@ class Asistente:
         return datos.get("result") or "Listo."
 
     def responder(self, texto, estado="hablando"):
+        texto, tarjeta = extraer_tarjeta(texto)
+        if tarjeta:
+            self.avisar("mostrar", **tarjeta)
         log("Respuesta:", texto)
         self.hablar(texto, estado)
 
