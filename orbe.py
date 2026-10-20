@@ -12,6 +12,7 @@ import math
 import os
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -56,7 +57,8 @@ CENTRO_Y = 160  # centro de la esfera dentro de la ventana
 ZONA = 150  # radio de la zona circular de la ventana; el brillo se desvanece antes de llegar al borde
 RADIO = 46
 RETRASO_AUDIO = 0.12
-SEGUNDOS_TARJETA = 10  # lo que sigue visible la tarjeta tras terminar de hablar  # lo que tarda el audio en salir por los altavoces
+SEGUNDOS_TARJETA = 10  # lo que sigue visible la tarjeta tras terminar de hablar
+DURACION_EXPLOSION = 1.8  # lo que tarda el audio en salir por los altavoces
 
 
 def mezclar(a, b, k):
@@ -241,6 +243,20 @@ ICONOS = {"sol": icono_sol, "luna": icono_luna, "nubes": icono_nubes, "parcial":
           "lluvia": icono_lluvia, "tormenta": icono_tormenta, "nieve": icono_nieve, "niebla": icono_niebla}
 
 
+def duracion(texto):
+    """Segundos de "1:30:00", "5:00", "90s", "2 min", "1h 30m" o "45"; 0 si no se entiende."""
+    texto = texto.strip().lower()
+    if re.fullmatch(r"\d+(:\d{1,2}){1,2}", texto):
+        total = 0
+        for parte in texto.split(":"):
+            total = total * 60 + int(parte)
+        return total
+    unidades = {"h": 3600, "m": 60, "s": 1}
+    partes = re.findall(r"(\d+(?:[.,]\d+)?)\s*(h|m|s)?", texto)
+    total = sum(float(n.replace(",", ".")) * unidades.get(u or "s", 1) for n, u in partes)
+    return int(total)
+
+
 class Puente(QObject):
     """Lleva los avisos del hilo del asistente al hilo de la interfaz."""
     aviso = pyqtSignal(str, dict)
@@ -308,6 +324,8 @@ class Orbe(QWidget):
         self.mirada = [0.0, 0.0]
         self.sorpresa, self.inclinacion, self.t_feliz = 0.0, 0.0, 0.0
         self.tarjeta, self.mezcla_tarjeta, self.t_fin_tarjeta = None, 0.0, 0.0
+        self.cuenta = None  # temporizador en marcha: {"fin", "total", "nombre"}
+        self.explosion, self.chispas_explosion = 0.0, []
         self.objetivo_mirada, self.t_mirada = (0.0, 0.0), 0.0
         self.cursor_previo, self.t_cursor = QCursor.pos(), 0.0
         self.t_parpadeo = time.time() + random.uniform(2, 5)
@@ -429,7 +447,10 @@ class Orbe(QWidget):
             self.tarjeta = None
         if self.tarjeta and self.estado != "dormida":
             self.t_fin_tarjeta = ahora + SEGUNDOS_TARJETA
-        activa = bool(self.tarjeta) and ahora < self.t_fin_tarjeta
+        if self.cuenta and ahora >= self.cuenta["fin"]:
+            self.explotar()
+        activa = (bool(self.tarjeta) and ahora < self.t_fin_tarjeta) or (
+            bool(self.cuenta) and self.estado != "escuchando")
         self.mezcla_tarjeta = mezclar(self.mezcla_tarjeta, 1.0 if activa else 0.0, 0.1)
         if not activa and self.mezcla_tarjeta < 0.01:
             self.mezcla_tarjeta, self.tarjeta = 0.0, None
@@ -550,6 +571,12 @@ class Orbe(QWidget):
 
     def mostrar_tarjeta(self, datos):
         datos = dict(datos)
+        if datos.get("icono") == "temporizador":
+            segundos = duracion(datos.get("grande", ""))
+            if segundos:
+                self.cuenta = {"fin": time.time() + segundos, "total": segundos, "nombre": datos.get("pequeno", "")}
+                self.tarjeta = None
+                return
         if datos.get("icono") == "reloj":
             # Se guarda la diferencia con la hora local para que el reloj siga andando (sirve para otras zonas).
             m = re.search(r"(\d{1,2})[:.](\d{2})", datos.get("grande", ""))
@@ -559,8 +586,118 @@ class Orbe(QWidget):
         self.tarjeta = datos
         self.t_fin_tarjeta = time.time() + SEGUNDOS_TARJETA
 
+    def explotar(self):
+        """Fin del temporizador: destello, la gota estalla en chispas y vuelve a formarse."""
+        self.cuenta = None
+        self.explosion = time.time()
+        self.chispas_explosion = [(random.uniform(0, 2 * math.pi), random.uniform(0.5, 1.0),
+                                   random.uniform(1.5, 3.5)) for _ in range(46)]
+        if self.oculta_por_juego and not self.isVisible():
+            self.show()
+        sonido = "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga"
+        if os.path.exists(sonido):
+            subprocess.Popen(["paplay", sonido], stderr=subprocess.DEVNULL)
+
+    def fase_explosion(self):
+        """0 → 1 durante la explosión; None si no hay ninguna."""
+        k = (time.time() - self.explosion) / DURACION_EXPLOSION
+        return k if 0 <= k < 1 else None
+
+    def escala_cuerpo(self):
+        k = self.fase_explosion()
+        if k is None:
+            return 1.0
+        if k < 0.12:  # se hincha antes de estallar
+            return 1 + 0.35 * (k / 0.12)
+        if k < 0.6:
+            return 0.0
+        x = (k - 0.6) / 0.4  # se vuelve a formar con un rebote elástico
+        return 1 - math.cos(x * math.pi * 2.5) * math.exp(-x * 4) if x > 0 else 0.0
+
+    def dibujar_explosion(self, p, c, r, tono):
+        k = self.fase_explosion()
+        if k is None or k < 0.1:
+            return
+        x = min(1.0, (k - 0.1) / 0.75)
+        avance = 1 - (1 - x) ** 3
+        limite = ZONA - 28
+        p.setPen(Qt.PenStyle.NoPen)
+        # Destello
+        if x < 0.35:
+            g = QRadialGradient(c, r * 2.2)
+            g.setColorAt(0, QColor(255, 255, 255, int(230 * (1 - x / 0.35))))
+            g.setColorAt(1, QColor(255, 255, 255, 0))
+            p.setBrush(g)
+            p.drawEllipse(c, r * 2.2, r * 2.2)
+        # Onda expansiva
+        ro = r * (1 + 1.4 * avance)
+        apagado = max(0.0, min(1.0, (limite - 25 - ro) / 30))  # desaparece antes de llegar al borde
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.setPen(QPen(tono(0.8 * (1 - x) * apagado, 180), 3 * (1 - x) + 0.5))
+        p.drawEllipse(c, ro, ro)
+        p.setPen(Qt.PenStyle.NoPen)
+        # Chispas
+        for angulo, vel, tam in self.chispas_explosion:
+            d = min(limite, r * (0.4 + 2.4 * vel * avance))
+            pos = QPointF(c.x() + math.cos(angulo) * d, c.y() + math.sin(angulo) * d + 25 * x * x)
+            a = (1 - x) * min(1.0, (limite + 6 - d) / 18)
+            g = QRadialGradient(pos, tam * 2.5)
+            g.setColorAt(0, tono(a, 200))
+            g.setColorAt(1, tono(0, 200))
+            p.setBrush(g)
+            p.drawEllipse(pos, tam * 2.5, tam * 2.5)
+
+    def dibujar_cuenta(self, p, c, r, tono):
+        """Temporizador: tiempo restante y un anillo de luz que se va vaciando."""
+        quedan = max(0.0, self.cuenta["fin"] - time.time())
+        fraccion = quedan / self.cuenta["total"]
+        urgente = quedan <= 10
+        latido = 0.5 + 0.5 * math.cos(quedan * 2 * math.pi) if urgente else 0.0
+        color = QColor(255, 120, 80) if urgente else tono(1.0, 185)
+        radio = r * 0.8
+        rect = QRectF(c.x() - radio, c.y() - radio, radio * 2, radio * 2)
+        grosor = max(3.0, r * 0.09)
+        pista = QPen(QColor(255, 255, 255, 45), grosor)
+        p.setPen(pista)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawEllipse(rect)
+        pen = QPen(color, grosor * (1 + 0.3 * latido))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawArc(rect, 90 * 16, int(fraccion * 360 * 16))
+        # Punto brillante en la punta del anillo
+        a = math.radians(90 + fraccion * 360)
+        punta = QPointF(c.x() + math.cos(a) * radio, c.y() - math.sin(a) * radio)
+        g = QRadialGradient(punta, grosor * 2.2)
+        g.setColorAt(0, QColor(255, 255, 255, 230))
+        g.setColorAt(1, QColor(255, 255, 255, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(g)
+        p.drawEllipse(punta, grosor * 2.2, grosor * 2.2)
+
+        s = math.ceil(quedan)
+        texto = f"{s // 3600}:{s // 60 % 60:02d}:{s % 60:02d}" if s >= 3600 else f"{s // 60}:{s % 60:02d}"
+        fuente = QFont("Noto Sans", 10, QFont.Weight.Bold)
+        fuente.setPixelSize(int(r * (0.42 if s < 3600 else 0.32) * (1 + 0.12 * latido)))
+        p.setFont(fuente)
+        caja = QRectF(c.x() - r, c.y() - r * 0.4, r * 2, r * 0.8)
+        p.setPen(QColor(0, 0, 0, 90))
+        p.drawText(caja.translated(0, 1.5), Qt.AlignmentFlag.AlignCenter, texto)
+        p.setPen(QColor(255, 225, 215) if urgente else QColor(250, 252, 255))
+        p.drawText(caja, Qt.AlignmentFlag.AlignCenter, texto)
+        if self.cuenta["nombre"]:
+            fuente = QFont("Noto Sans", 9)
+            p.setFont(fuente)
+            p.setPen(QColor(235, 245, 255, 230))
+            p.drawText(QRectF(c.x() - 150, c.y() + r * 1.12, 300, 22), Qt.AlignmentFlag.AlignCenter,
+                       QFontMetrics(fuente).elidedText(self.cuenta["nombre"], Qt.TextElideMode.ElideRight, 290))
+        p.setPen(Qt.PenStyle.NoPen)
+
     def dibujar_tarjeta(self, p, c, r, t):
         """Dibuja dentro de la gota un icono animado y el dato (hora, temperatura...)."""
+        if self.cuenta and not (self.tarjeta and time.time() < self.t_fin_tarjeta):
+            self.dibujar_cuenta(p, c, r, self.tono_actual)
+            return
         d = self.tarjeta
         icono, grande, pequeno = d.get("icono", "dato"), d.get("grande", ""), d.get("pequeno", "")
         blanco = QColor(250, 252, 255)
@@ -655,6 +792,8 @@ class Orbe(QWidget):
         p.translate(c)
         p.rotate(math.degrees(self.inclinacion))
         p.scale(1 + 0.06 * voz - 0.05 * self.sorpresa, 1 - 0.07 * voz + 0.08 * self.sorpresa)
+        cuerpo = self.escala_cuerpo()
+        p.scale(max(cuerpo, 0.001), max(cuerpo, 0.001))
         p.translate(-c)
 
         def tono(alfa, claro=100):
@@ -716,7 +855,8 @@ class Orbe(QWidget):
         if m < 0.99:
             p.setOpacity(1 - m)
             self.dibujar_cara(p, c, r, tono)
-        if m > 0.01 and self.tarjeta:
+        if m > 0.01 and (self.tarjeta or self.cuenta):
+            self.tono_actual = tono
             p.setOpacity(m)
             self.dibujar_tarjeta(p, c, r, t)
         p.setOpacity(1)
@@ -738,6 +878,7 @@ class Orbe(QWidget):
             p.drawEllipse(pos, tam * 3, tam * 3)
 
         p.restore()
+        self.dibujar_explosion(p, c, r, tono)
         if self.alfa_sub > 0 and self.subtitulo:
             self.dibujar_subtitulo(p, tono)
 

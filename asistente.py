@@ -65,9 +65,11 @@ PROMPT_SISTEMA = (
     f"y termina tu respuesta exactamente con {MARCA}. El usuario confirmará por voz y entonces podrás hacerlo. "
     "La esfera puede mostrar un dato breve en lugar de su cara: si tu respuesta incluye la hora, el clima, "
     "una temperatura, un temporizador o un número corto, añade al final [MOSTRAR icono|texto grande|texto pequeño], "
-    "con icono uno de: reloj, sol, luna, nubes, parcial, lluvia, tormenta, nieve, niebla, dato. "
+    "con icono uno de: reloj, sol, luna, nubes, parcial, lluvia, tormenta, nieve, niebla, dato, temporizador. "
     "Ejemplos: [MOSTRAR reloj|17:42|martes 20 de octubre], [MOSTRAR lluvia|14°|Madrid, lluvia ligera], "
-    "[MOSTRAR dato|1.234 €|total]. No se lee en voz alta; no lo uses si no aporta nada."
+    "[MOSTRAR dato|1.234 €|total], [MOSTRAR temporizador|5:00|pasta]. No se lee en voz alta; no lo uses si no aporta nada. "
+    "Para un temporizador o cuenta atrás no ejecutes nada ni pidas confirmación: con esa etiqueta (duración en m:ss "
+    "o h:mm:ss) la esfera lleva la cuenta, la muestra y avisa con un sonido al llegar a cero."
 )
 TARJETA = re.compile(r"\[MOSTRAR\s+([^\]]*)\]")
 SI = {"si", "hazlo", "dale", "vale", "adelante", "claro", "ok", "okay", "confirmo"}
